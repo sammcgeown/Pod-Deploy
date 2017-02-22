@@ -153,25 +153,25 @@ if($deployESXi) {
 
 			$nestedESXiVM = Get-VM -Name $nestedESXiName -Server $pVCSA
 
-			Write-Log "Updating vCPU Count to $NestedESXivCPU & vMEM to $NestedESXivMEM GB"
-			$nestedESXiVM | Set-VM -NumCpu $NestedESXivCPU -MemoryGB $NestedESXivMEM -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
+			Write-Log "Updating vCPU Count to $($podConfig.esxi.cpu) & vMEM to $($podConfig.esxi.ram) GB"
+			$nestedESXiVM | Set-VM -NumCpu $podConfig.esxi.cpu -MemoryGB $podConfig.esxi.ram -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 
-			Write-Log "Updating vSAN Caching VMDK size to $NestedESXiCachingvDisk GB"
+			Write-Log "Updating vSAN Caching VMDK size to $($podConfig.esxi.cacheDisk) GB"
 			# Work around for VSAN issue with not enough disk space - delete and add new disk
 			Get-HardDisk -VM $nestedESXiVM | where-object -Property "CapacityGB" -eq -Value 4 | Remove-HardDisk -DeletePermanently -Confirm:$false
-			New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $NestedESXiCachingvDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+			New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.cacheDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
 
-			Write-Log "Updating vSAN Capacity VMDK size to $NestedESXiCapacityvDisk GB"
+			Write-Log "Updating vSAN Capacity VMDK size to $podConfig.esxi.capacityDisk GB"
 			# Work around for VSAN issue with not enough disk space - delete and add new disk
 			Get-HardDisk -VM $nestedESXiVM | where-object -Property "CapacityGB" -eq -Value 8 | Remove-HardDisk -DeletePermanently -Confirm:$false
-			New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $NestedESXiCapacityvDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+			New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.capacityDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
 
 			# Ensure the disks are marked as SSD
 			New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:0.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
 			New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:1.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
 			New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:2.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
 
-			Write-Log "Moving $nestedESXiName to $VMFolder folder"
+			Write-Log "Moving $nestedESXiName to $($pFolder.Name) folder"
 			Move-VM -VM $nestedESXiVM -Destination $pFolder | Out-File -Append -LiteralPath $verboseLogFile
 
 			Write-Log "Powering On $nestedESXiName"
