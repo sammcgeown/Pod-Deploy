@@ -2,17 +2,17 @@
     "__version": "0.1",
     "__comments": "Configuration for pod-deploy.ps1 - www.definit.co.uk",
     "target": {
-        "server": "vcsa.definit.local",
+        "server": "vc.definit.local",
         "user": "administrator@vsphere.local",
         "password": "VMware1!",
         "datacenter": "Lab",
         "cluster": "Workload",
         "datastore": "vsanDatastore",
-        "folder": "Nested Labs/Pod201",
-        "portgroup": "201-Pod-201-Nested",
+        "folder": "Nested Labs/Pod204",
+        "portgroup": "204-Pod-204-Nested",
         "network": {
             "netmask": "255.255.255.0",
-            "gateway": "192.168.201.1",
+            "gateway": "192.168.204.1",
             "prefix": "24",
             "dns": "192.168.1.1",
             "domain": "definit.local",
@@ -20,24 +20,25 @@
         }
     },
     "sources": {
-        "VCSAInstaller": "VMware-VCSA-all-6.0.0-3634788",
-        "ESXiAppliance": "ESXi\\Nested_ESXi6.x_Appliance_Template_v5.ova",
-        "NSXAppliance" : "NSX\\VMware-NSX-Manager-6.2.4-4292526.ova",
-        "vRAAppliance" : "vRA\\VMware-vR-Appliance-7.2.0.381-4660246_OVF10.ova"
+        "VCSAInstaller": "E:\\Pod-Deploy-Source\\vSphere\\VMware-VCSA-all-6.5.0-5973321",
+        "ESXiAppliance": "E:\\Pod-Deploy-Source\\ESXi\\Nested_ESXi6.5d_Appliance_Template_v1.0.ova",
+        "NSXAppliance" : "E:\\Pod-Deploy-Source\\NSX\\VMware-NSX-Manager-6.3.0-5007049.ova",
+        "vRAAppliance" : "E:\\Pod-Deploy-Source\\vRA\\VMware-vR-Appliance-7.2.0.381-4660246_OVF10.ova",
+        "ESXiPatch": "E:\\Pod-Deploy-Source\\ESXi\\ESXi650-201701001\\vmw-ESXi-6.5.0-metadata.zip"
     },
     "esxi": {
         "hosts": [
             {
-                "name": "pod-201-esxi-1",
-                "ip": "192.168.201.20"
+                "name": "pod-204-esxi-1",
+                "ip": "192.168.204.20"
             },
             {
-                "name": "pod-201-esxi-2",
-                "ip": "192.168.201.21"
+                "name": "pod-204-esxi-2",
+                "ip": "192.168.204.21"
             },
             {
-                "name": "pod-201-esxi-3",
-                "ip": "192.168.201.22"
+                "name": "pod-204-esxi-3",
+                "ip": "192.168.204.22"
             }
         ],
         "cpu": "4",
@@ -46,46 +47,64 @@
         "capacityDisk": "200",
         "createVMFS": false
     },
-    "vcsa": {
-        "deploymentSize": "tiny",
-        "name": "pod-201-vcsa",
-        "ip": "192.168.201.10",
-        "hostname": "192.168.201.10",
+    "psc": {
+        "deploymentSize": "infrastructure",
+        "name": "pod-204-psc",
+        "ip": "192.168.204.9",
+        "hostname": "192.168.204.9",
         "rootPassword": "VMware1!",
         "sso": {
             "domain": "vsphere.local",
-            "site": "Pod201-Site",
+            "site": "Pod204-Site",
             "password": "VMware1!",
             "replicationPartner": ""
         },
-        "datacenter": "Pod201-Datacenter",
-        "cluster": "Pod201-Cluster-1",
-        "distributedSwitch": "Pod201",
-        "portgroup": "VLAN201"
+        "datacenter": "Pod204-Datacenter",
+        "cluster": "Pod204-Cluster-1",
+        "distributedSwitch": "Pod-204-VDS",
+        "portgroup": "VLAN204"
+    },
+    "vcsa": {
+        "deploymentSize": "management-small",
+        "name": "pod-204-vcsa",
+        "ip": "192.168.204.10",
+        "hostname": "192.168.204.10",
+        "rootPassword": "VMware1!",
+        "sso": {
+            "domain": "vsphere.local",
+            "site": "Pod204-Site",
+            "password": "VMware1!",
+            "replicationPartner": ""
+        },
+        "datacenter": "Pod204-Datacenter",
+        "cluster": "Pod204-Cluster-1",
+        "distributedSwitch": "Pod-204-VDS",
+        "portgroup": "VLAN204"
     },
     "general": {
         "password": "VMware1!",
         "syslog": "192.168.1.26",
-        "ssh": true
+        "ssh": true,
+        "log": "pod-204-deploy.log"
     },
     "license": {
         "vcenter": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
         "vsphere": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
         "vsan": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
-        "nsx": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX1"
+        "nsx": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
     },
     "nsx": {
-        "name": "pod-201-nsx",
-        "ip": "192.168.201.11",
+        "name": "pod-204-nsx",
+        "ip": "192.168.204.11",
         "password": "VMware1!",
         "controller": {
-            "startIp": "192.168.201.12",
-            "endIp": "192.168.201.14",
-            "password": "VMware1!VMware1!"
+            "startIp": "192.168.204.12",
+            "endIp": "192.168.204.14",
+            "password": "VMware1!"
         },
         "vtep": {
-            "startIp": "192.168.201.30",
-            "endIp": "192.168.201.39"
+            "startIp": "192.168.204.30",
+            "endIp": "192.168.204.39"
         }
     }
 }
