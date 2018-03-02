@@ -74,20 +74,6 @@
         "vsan": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
         "nsx": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
     },
-    "nsx": {
-        "name": "pod-203-nsx",
-        "ip": "192.168.203.11",
-        "password": "VMware1!",
-        "controller": {
-            "startIp": "192.168.203.12",
-            "endIp": "192.168.203.14",
-            "password": "VMware1!VMware1!"
-        },
-        "vtep": {
-            "startIp": "192.168.203.30",
-            "endIp": "192.168.203.39"
-        }
-    },
     "nfs": [
         {
             "name": "NFS-01",
