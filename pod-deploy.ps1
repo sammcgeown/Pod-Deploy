@@ -134,7 +134,7 @@ if($deployESXi) {
 	}
 
 	$deployTasks = @()
-
+ 
 	$podConfig.esxi.hosts | ForEach-Object {
 		Write-Log "Selecting a host from $($podConfig.target.cluster)"
 		$pESXi = $pCluster | Get-VMHost -Server $pVCSA | where { $_.ConnectionState -eq "Connected" } | Get-Random
@@ -184,7 +184,7 @@ if($deployESXi) {
 				Write-Log "Updating vSAN Caching VMDK size to $($podConfig.esxi.cacheDisk) GB"
 				# Work around for VSAN issue with not enough disk space - delete and add new disk
 				Get-HardDisk -VM $nestedESXiVM | where-object -Property "CapacityGB" -eq -Value 4 | Remove-HardDisk -DeletePermanently -Confirm:$false
-				New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.cacheDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+				#New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.cacheDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
 
 				Write-Log "Updating vSAN Capacity VMDK size to $($podConfig.esxi.capacityDisk) GB"
 				# Work around for VSAN issue with not enough disk space - delete and add new disk
@@ -220,7 +220,7 @@ if($deployESXi) {
 }
 
 if($deployVCSA) {
-	Write-Log "#### Deploying VCSA ####"
+	Write-Log "#### Deploying vCenter Server Appliance(s) ####"
 	$pVCSA = Get-VCSAConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
 	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
 	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
@@ -231,7 +231,7 @@ if($deployVCSA) {
 	$pCluster | Set-Cluster -DrsEnabled:$false -Confirm:$false |  Out-File -Append -LiteralPath $verboseLogFile
 
 	if($podConfig.psc -ne $null) {
-		Write-Log "#### Deploying external PSC ####"
+		Write-Log "##### Deploying external PSC #####"
 		$config = (Get-Content -Raw "$($VCSAInstaller)\vcsa-cli-installer\templates\install\PSC_first_instance_on_VC.json") | convertfrom-json
 		$config.'new.vcsa'.vc.hostname = $podConfig.target.server
 		$config.'new.vcsa'.vc.username = $podConfig.target.user
@@ -280,15 +280,14 @@ if($deployVCSA) {
 
 	}
 	if($podConfig.vcsa -ne $null) {
-		Write-Log "#### Deploying VCSA ####"
 		if($podConfig.psc -ne $null) {
-			Write-Log "VCSA with external PSC"
+			Write-Log "##### Deploying VCSA with external PSC #####"
 			$config = (Get-Content -Raw "$($VCSAInstaller)\vcsa-cli-installer\templates\install\vCSA_on_VC.json") | convertfrom-json
 			# External PSC Specific config
 			$config.'new.vcsa'.sso.'sso.port' = "443"
 			$config.'new.vcsa'.sso.'platform.services.controller' = $podConfig.psc.ip
 		} else {
-			Write-Log "VCSA with embedded PSC"
+			Write-Log "##### Deploying VCSA with embedded PSC #####"
 			$config = (Get-Content -Raw "$($VCSAInstaller)\vcsa-cli-installer\templates\install\embedded_vCSA_on_VC.json") | convertfrom-json
 			# Embedded PSC Specific config
 			$config.'new.vcsa'.sso.'site-name' = $podConfig.vcsa.sso.site
@@ -365,7 +364,7 @@ if($configureVCSA) {
 		$licenseManager.AddLicense($podConfig.license.vsan,$null) |  Out-File -Append -LiteralPath $verboseLogFile
 		$licenseManager.AddLicense($podConfig.license.nsx,$null) |  Out-File -Append -LiteralPath $verboseLogFile
 		$licenseAssignmentManager = Get-View $licenseManager.LicenseAssignmentManager
-		Write-Log "Assigning vCenter Server License"
+		Write-Log "Assigning vCenter Server License" -Info
 		try {
 			$licenseAssignmentManager.UpdateAssignedLicense($nVCSA.InstanceUuid, $podConfig.license.vcenter, $null) | Out-File -Append -LiteralPath $verboseLogFile
 		}
@@ -382,7 +381,7 @@ if($configureVCSA) {
 		$podConfig.esxi.hosts | ForEach-Object {
 			$nestedESXiName = $_.name
 			$nestedESXiIPAddress = $_.ip
-			Write-Log "Adding ESXi host $nestedESXiIPAddress to Cluster"
+			Write-Log "Adding ESXi host $nestedESXiIPAddress to Cluster" -Info
 			if((Get-VMHost -Server $nVCSA | Where-Object -Property Name -eq -Value $nestedESXiIPAddress) -eq $null) {
 				Add-VMHost -Server $nVCSA -Location $nCluster -User "root" -Password $podConfig.general.password -Name $nestedESXiIPAddress -Force | Set-VMHost -LicenseKey $podConfig.license.vsphere -State "Maintenance" | Out-File -Append -LiteralPath $verboseLogFile
 			} else {
@@ -398,7 +397,7 @@ if($configureVCSA) {
 			Write-Log "VSAN is enabled, skipping" -Warning
 		} else {
 			Set-Cluster -Cluster $podConfig.vcsa.cluster -VsanEnabled:$true -VsanDiskClaimMode Automatic -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
-			Write-Log "Assigning VSAN License"
+			Write-Log "Assigning VSAN License" -Info
 			$serviceInstance = Get-View ServiceInstance -Server $nVCSA
 			$licenseManagerRef=$serviceInstance.Content.LicenseManager
 			$licenseManager=Get-View $licenseManagerRef
@@ -438,13 +437,13 @@ if($configureVCSA) {
 		$nDatacenter = Get-Datacenter -Name $podConfig.vcsa.datacenter -Server $nVCSA
 		$distributedSwitch = Get-VDSwitch -Server $nVCSA | Where-Object -Property Name -eq -Value $podConfig.vcsa.distributedSwitch
 		if($distributedSwitch -eq $null) {
-			Write-Log "Creating distributed switch"
+			Write-Log "Creating distributed switch" -Info
 			$distributedSwitch = New-VDSwitch -Name $podConfig.vcsa.distributedSwitch -Location $nDatacenter -Server $nVCSA -NumUplinkPorts 2
 			Start-Sleep -Seconds 20 # Pause reduces failures
 		} else {
 			Write-Log "Distributed switch exists, skipping" -Warning
 		}
-		Write-Log "Adding hosts to distributed switch"
+		Write-Log "Adding hosts to distributed switch" -Info
 		foreach ($nHost in $nHosts) {
 			if(($distributedSwitch | Get-VMHost | where {$_.Name -eq $nHost.Name}) -eq $null) {
 				Add-VDSwitchVMHost -VDSwitch $distributedSwitch -VMHost $nHost
@@ -457,7 +456,7 @@ if($configureVCSA) {
 		Start-Sleep -Seconds $pause # Pause reduces failures
 		$dvPortGroup = Get-VDPortgroup | Where-Object -Property Name -eq -Value $podConfig.vcsa.portgroup
 		if($dvPortGroup -eq $null) {
-			Write-Log "Creating distributed port group"
+			Write-Log "Creating distributed port group" -Info
 			$dvPortGroup = New-VDPortgroup -Name $podConfig.vcsa.portgroup -NumPorts 1000 -VDSwitch $distributedSwitch
 			$pause = 20
 		} else {
@@ -510,7 +509,6 @@ if($configureVCSA) {
 
 if($DeployNSXManager) {
 	Write-Log "#### Deploying NSX Manager ####"
-	Write-Log "Getting connection for $($podConfig.target.server)"
 	$pVCSA = Get-VCSAConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
 	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
 	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
@@ -537,14 +535,14 @@ if($DeployNSXManager) {
 		$NSX = Get-VM -Name $podConfig.nsx.name -Server $pVCSA
 		Write-Log "Moving $($podConfig.nsx.name) to $($podConfig.target.folder) folder"
 		Move-VM -VM $NSX -Destination $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
-		Write-Log "Powering On $($podConfig.nsx.name)"
+		Write-Log "Powering On $($podConfig.nsx.name)" -Info
 		Start-VM -Server $pVCSA -VM $NSX -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 		do {
 			Sleep -Seconds 20
 			$VM_View = Get-VM $podConfig.nsx.name -Server $pVCSA | Get-View
 			$toolsStatus = $VM_View.Summary.Guest.ToolsRunningStatus
 		} Until ($toolsStatus -eq "guestToolsRunning")
-		Write-Log "$($podConfig.nsx.name) has booted up successfully, waiting for API"
+		Write-Log "$($podConfig.nsx.name) has booted up successfully, waiting for API" -Info
 		$base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("{0}:{1}" -f "admin",$podConfig.nsx.password)))
 		$header = @{Authorization=("Basic {0}" -f $base64AuthInfo)}
 		$uri = "https://$($podConfig.nsx.ip)/api/2.0/vdn/controller"
@@ -552,7 +550,7 @@ if($DeployNSXManager) {
 			Start-Sleep -Seconds 20
 			$result = try { Invoke-WebRequest -Uri $uri -Headers $header -ContentType "application/xml"} catch { $_.Exception.Response}
 		} Until ($result.statusCode -eq "200")
-		Write-Log "Connected to NSX API successfully"
+		Write-Log "Connected to NSX API successfully" -Info
 	} else {
 		Write-Log "NSX manager exists, skipping" -Warning
 	}
@@ -672,4 +670,4 @@ Close-VCSAConnection
 $EndTime = Get-Date
 $duration = [math]::Round((New-TimeSpan -Start $StartTime -End $EndTime).TotalMinutes,2)
 
-Write-Log "Pod Deployment Completed in $($duration) minutes"
+Write-Log "Pod Deployment Tasks Completed in $($duration) minutes"
