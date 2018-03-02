@@ -11,7 +11,12 @@ param(
 	[switch]$configureNSX,
 	[switch]$deployvRAAppliance
 )
-Get-Module -ListAvailable VMware.PowerCLI,PowerNSX | Import-Module -ErrorAction SilentlyContinue
+try {
+	Get-Module -ListAvailable VMware.PowerCLI,PowerNSX | Import-Module -ErrorAction SilentlyContinue
+}
+catch {}
+finally {}
+
 if ( !(Get-Module -Name VMware.VimAutomation.Core -ErrorAction SilentlyContinue) ) {
 	throw "PowerCLI must be installed"
 }
@@ -100,12 +105,12 @@ function Close-VcConnection {
 		[string]$vcsaName
 	)
 	if($vcsaName.Length -le 0) {
-		if($Global:DefaultVIServers -le 0) {
+		if($Global:DefaultVIServers.count -ge 0) {
 	        Write-Log -Message "Disconnecting from all vCenter Servers"
 			Disconnect-VIServer -Server $Global:DefaultVIServers -Confirm:$false
 		}
 	} else {
-		$existingConnection =  $global:DefaultVIServers | Where-Object -Property Name -eq -Value $vcsaName
+		$existingConnection =  $global:DefaultVIServers | where-object -Property Name -eq -Value $vcsaName
         if($existingConnection -ne $null) {
             Write-Log -Message "Disconnecting from $($vcsaName)"
 			Disconnect-VIServer -Server $existingConnection -Confirm:$false;
@@ -135,22 +140,22 @@ function Get-PodFolder {
 
 Write-Log "#### Validating Configuration ####"
 Write-Log "### Testing Sources"
-if(Test-Path -Path $podConfig.sources.VCSAInstaller) { Write-Log "VCSA Source: OK" } else { Write-Log "VCSA Source: Failed" -Warning; $preflightFailure = $true }
-if(Test-Path -Path $podConfig.sources.ESXiAppliance) { Write-Log "ESXi Source: OK" } else { Write-Log "ESXi Source: Failed" -Warning; $preflightFailure = $true }
-if(Test-Path -Path $podConfig.sources.NSXAppliance) { Write-Log "NSX Source: OK" } else { Write-Log "NSX Source: Failed" -Warning; $preflightFailure = $true }
+if(Test-Path -Path $podConfig.sources.VCSAInstaller) { Write-Log "VCSA Source: OK" -Info } else { Write-Log "VCSA Source: Failed" -Warning; $preflightFailure = $true }
+if(Test-Path -Path $podConfig.sources.ESXiAppliance) { Write-Log "ESXi Source: OK" -Info } else { Write-Log "ESXi Source: Failed" -Warning; $preflightFailure = $true }
+if(Test-Path -Path $podConfig.sources.NSXAppliance) { Write-Log "NSX Source: OK" -Info } else { Write-Log "NSX Source: Failed" -Warning; $preflightFailure = $true }
 Write-Log "### Validating Target"
 $pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password -ErrorAction SilentlyContinue
-if($pVCSA) { Write-Log "Physical VCSA: OK" } else { Write-Log "Physical VCSA: Failed" -Warning; $preflightFailure = $true }
+if($pVCSA) { Write-Log "Physical VCSA: OK" -Info } else { Write-Log "Physical VCSA: Failed" -Warning; $preflightFailure = $true }
 $pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA -ErrorAction SilentlyContinue
-if($pCluster) { Write-Log "Physical Cluster: OK" } else { Write-Log "Physical Cluster: Failed" -Warning; $preflightFailure = $true }
+if($pCluster) { Write-Log "Physical Cluster: OK" -Info } else { Write-Log "Physical Cluster: Failed" -Warning; $preflightFailure = $true }
 $pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA -ErrorAction SilentlyContinue
-if($pDatastore) { Write-Log "Physical Datastore: OK" } else { Write-Log "Physical Datastore: Failed" -Warning; $preflightFailure = $true }
+if($pDatastore) { Write-Log "Physical Datastore: OK" -Info } else { Write-Log "Physical Datastore: Failed" -Warning; $preflightFailure = $true }
 $pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA -ErrorAction SilentlyContinue
-if($pPortGroup) { Write-Log "Physical Portgroup: OK" } else { Write-Log "Physical Portgroup: Failed" -Warning; $preflightFailure = $true }
+if($pPortGroup) { Write-Log "Physical Portgroup: OK" -Info } else { Write-Log "Physical Portgroup: Failed" -Warning; $preflightFailure = $true }
 $pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder -ErrorAction SilentlyContinue
-if($pFolder) { Write-Log "Physical Folder: OK" } else { Write-Log "Physical Folder: Failed" -Warning; $preflightFailure = $true }
+if($pFolder) { Write-Log "Physical Folder: OK" -Info } else { Write-Log "Physical Folder: Failed" -Warning; $preflightFailure = $true }
 $pHost = $pCluster | Get-VMHost -Server $pVCSA  -ErrorAction SilentlyContinue | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
-if($pHost) { Write-Log "Physical Host: OK" } else { Write-Log "Physical Host: Failed" -Warning; $preflightFailure = $true }
+if($pHost) { Write-Log "Physical Host: OK" -Info } else { Write-Log "Physical Host: Failed" -Warning; $preflightFailure = $true }
 
 
 
@@ -384,14 +389,14 @@ if($configureVCSA) {
 	$nVCSA = Get-VcConnection -vcsaName $podConfig.vcsa.ip -vcsaUser "administrator@$($podConfig.vcsa.sso.domain)" -vcsaPassword $podConfig.vcsa.sso.password
 
 	Write-Log "## Configuring Datacenter and Cluster ##"
-	Write-Log "Creating Datacenter $($podConfig.vcsa.datacenter)"
+	Write-Log "Creating Datacenter $($podConfig.vcsa.datacenter)" -Info
 	$nDatacenter = (Get-Datacenter -Server $nVCSA | Where-Object -Property Name -eq -Value $podConfig.vcsa.datacenter)
 	if($nDatacenter -eq $null) {
 		$nDatacenter = New-Datacenter -Server $nVCSA -Name $podConfig.vcsa.datacenter -Location (Get-Folder -Type Datacenter -Server $nVCSA)
 	} else {
 		Write-Log "Datacenter exists, skipping" -Warning
 	}
-	Write-Log "Creating VSAN Cluster $($podConfig.vcsa.cluster)"
+	Write-Log "Creating Cluster $($podConfig.vcsa.cluster)" -Info
 	$nCluster = Get-Cluster -Server $nVCSA | Where-object -Property Name -eq -Value $podConfig.vcsa.cluster
 	if($nCluster -eq $null) {
 		$nCluster = New-Cluster -Server $nVCSA -Name $podConfig.vcsa.cluster -Location $nDatacenter -DrsEnabled
@@ -419,17 +424,26 @@ if($configureVCSA) {
 		}
 	}
 
+	Write-Log "## Adding hosts to cluster ##"
+	$nCluster = Get-Cluster -Name $podConfig.vcsa.cluster -Server $nVCSA
+	$podConfig.esxi.hosts | ForEach-Object {
+		$nestedESXiIPAddress = $_.ip
+		Write-Log "Adding ESXi host $($_.name) to Cluster" -Info
+		if((Get-VMHost -Server $nVCSA | Where-Object -Property Name -eq -Value $nestedESXiIPAddress) -eq $null) {
+			Add-VMHost -Server $nVCSA -Location $nCluster -User "root" -Password $podConfig.general.password -Name $nestedESXiIPAddress -Force | Set-VMHost -LicenseKey $podConfig.license.vsphere -State "Maintenance" | Out-File -Append -LiteralPath $verboseLogFile
+		} else {
+			Write-Log "Host exists, skipping" -Warning
+		}
+	}
 
-	if($configureHosts) {
-		Write-Log "## Adding hosts to cluster ##"
-		$nCluster = Get-Cluster -Name $podConfig.vcsa.cluster -Server $nVCSA
-		$podConfig.esxi.hosts | ForEach-Object {
-			$nestedESXiIPAddress = $_.ip
-			Write-Log "Adding ESXi host $nestedESXiIPAddress to Cluster" -Info
-			if((Get-VMHost -Server $nVCSA | Where-Object -Property Name -eq -Value $nestedESXiIPAddress) -eq $null) {
-				Add-VMHost -Server $nVCSA -Location $nCluster -User "root" -Password $podConfig.general.password -Name $nestedESXiIPAddress -Force | Set-VMHost -LicenseKey $podConfig.license.vsphere -State "Maintenance" | Out-File -Append -LiteralPath $verboseLogFile
+	if($podConfig.nfs.count -gt 0) {
+		$nHosts = Get-VMHost -Server $nVCSA -Location $nCluster
+		foreach($nfs in $podConfig.nfs) {
+			Write-Log "Adding NFS Share $($nfs.name)" -Info
+			if(Get-Datastore -Name $nfs.name -ErrorAction SilentlyContinue) {
+				Write-Log "Datastore $($nfs.name) exists, skipping" -Warning
 			} else {
-				Write-Log "Host exists, skipping" -Warning
+				$nHosts | New-Datastore -Nfs -Name $nfs.name -NfsHost $nfs.server -Path $nfs.path | Out-File -Append -LiteralPath $verboseLogFile
 			}
 		}
 	}
@@ -483,7 +497,7 @@ if($configureVCSA) {
 		if($distributedSwitch -eq $null) {
 			Write-Log "Creating distributed switch" -Info
 			$distributedSwitch = New-VDSwitch -Name $podConfig.vcsa.distributedSwitch -Location $nDatacenter -Server $nVCSA -NumUplinkPorts 2
-			Start-Sleep -Seconds 20 # Pause reduces failures
+			Start-Sleep -Seconds 10 # Pause reduces failures
 		} else {
 			Write-Log "Distributed switch exists, skipping" -Warning
 		}
@@ -491,54 +505,46 @@ if($configureVCSA) {
 		foreach ($nHost in $nHosts) {
 			if(($distributedSwitch | Get-VMHost | Where-Object {$_.Name -eq $nHost.Name}) -eq $null) {
 				Add-VDSwitchVMHost -VDSwitch $distributedSwitch -VMHost $nHost
-				$pause = 20
+				Start-Sleep -Seconds 10 # Pause reduces failures
 			} else {
 				Write-Log "$($nHost) is already added to VDS" -Warning
-				$pause = 1
 			}
 		}
-		Start-Sleep -Seconds $pause # Pause reduces failures
 		$dvPortGroup = Get-VDPortgroup | Where-Object -Property Name -eq -Value $podConfig.vcsa.portgroup
 		if($dvPortGroup -eq $null) {
 			Write-Log "Creating distributed port group" -Info
 			$dvPortGroup = New-VDPortgroup -Name $podConfig.vcsa.portgroup -NumPorts 1000 -VDSwitch $distributedSwitch
-			$pause = 20
+			Start-Sleep -Seconds 10 # Pause reduces failures
 		} else {
 			Write-Log "Distributed port group exists, skipping" -Warning
-			$pause = 1
 		}
-		Start-Sleep -Seconds $pause # Pause reduces failures
 
 		foreach($nHost in $nHosts) {
 			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | Where-Object { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic1"}) -eq $NULL) {
 				Write-Log "Adding $($nHost.Name) vmnic1 to distributed switch"
 				Add-VDSwitchPhysicalNetworkAdapter -VMHostNetworkAdapter (Get-VMHostNetworkAdapter -Name "vmnic1" -VMHost $nHost) -DistributedSwitch $distributedSwitch -Confirm:$false
-				$pause = 20
 			} else {
 				Write-Log "$($nHost.Name) vmnic1 is already assigned to $($podConfig.vcsa.distributedSwitch)" -Warning
-				$pause = 1
 			}
 		}
-		Start-Sleep -Seconds $pause # Pause reduces failures
+		Start-Sleep -Seconds 30 # Pause reduces failures
 
 		foreach($nHost in $nHosts) {			
 			Write-Log "Migrating $($nHost.Name) VMKernel to distributed switch"
 			$VMHNA = Get-VMHostNetworkAdapter -VMHost $nHost -Name vmk0
 			if($VMHNA.PortGroupName -eq $podConfig.vcsa.portgroup) {
 				Write-Log "vmk0 on $($nHost.Name) is already assigned to the port group $($dvPortGroup)" -Warning
-				$pause = 1
 			} else {
 				Set-VMHostNetworkAdapter -PortGroup $dvPortGroup -VirtualNic (Get-VMHostNetworkAdapter  -Name vmk0 -VMHost $nHost) -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
-				$pause = 20
+				Start-Sleep -Seconds 20 # Pause reduces failures
 			}
 		}
-		Start-Sleep -Seconds $pause # Pause reduces failures
 
 		foreach($nHost in $nHosts) {
 			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | Where-Object { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic0"}) -eq $NULL) {
 				Write-Log "Moving $($nHost.Name) vmnic0 to distributed switch"
 				Add-VDSwitchPhysicalNetworkAdapter -VMHostNetworkAdapter (Get-VMHostNetworkAdapter -Name "vmnic0" -VMHost $nHost) -DistributedSwitch $distributedSwitch -Confirm:$false
-				$pause = 20
+				Start-Sleep -Seconds 20 # Pause reduces failures
 			} else {
 				Write-Log "$($nHost.Name) vmnic0 is already assigned to $($podConfig.vcsa.distributedSwitch)" -Warning
 				$pause = 1
@@ -548,7 +554,6 @@ if($configureVCSA) {
 		Write-Log "Removing standard vSwitches"
 		Get-VirtualSwitch -Server $nVCSA -Standard | Remove-VirtualSwitch -Confirm:$false
 	}
-	Close-VcConnection -vcsaName $podConfig.vcsa.ip
 }
 
 if($DeployNSXManager) {
@@ -598,7 +603,6 @@ if($DeployNSXManager) {
 	} else {
 		Write-Log "NSX manager exists, skipping" -Warning
 	}
-	Close-VcConnection -vcsaName $podConfig.target.server
 }
 
 if($configureNSX) {

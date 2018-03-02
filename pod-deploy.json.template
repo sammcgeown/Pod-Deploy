@@ -1,15 +1,15 @@
 {
-    "__version": "0.1",
+    "__version": "0.2",
     "__comments": "Configuration for pod-deploy.ps1 - www.definit.co.uk",
     "target": {
-        "server": "vc.definit.local",
+        "server": "vcsa.definit.local",
         "user": "administrator@vsphere.local",
         "password": "VMware1!",
         "datacenter": "Lab",
         "cluster": "Workload",
         "datastore": "vsanDatastore",
         "folder": "Nested Labs/Pod203",
-        "portgroup": "203-Pod-203-Nested",
+        "portgroup": "203-Pod-203",
         "network": {
             "netmask": "255.255.255.0",
             "gateway": "192.168.203.1",
@@ -20,11 +20,9 @@
         }
     },
     "sources": {
-        "VCSAInstaller": "E:\\Pod-Deploy-Source\\vSphere\\VMware-VCSA-all-6.5.0-5973321",
-        "ESXiAppliance": "E:\\Pod-Deploy-Source\\ESXi\\Nested_ESXi6.5d_Appliance_Template_v1.0.ova",
-        "NSXAppliance" : "E:\\Pod-Deploy-Source\\NSX\\VMware-NSX-Manager-6.3.0-5007049.ova",
-        "vRAAppliance" : "E:\\Pod-Deploy-Source\\vRA\\VMware-vR-Appliance-7.2.0.381-4660246_OVF10.ova",
-        "ESXiPatch": "E:\\Pod-Deploy-Source\\ESXi\\ESXi650-201701001\\vmw-ESXi-6.5.0-metadata.zip"
+        "VCSAInstaller": "/Users/smcgeown/Documents/SCRIPTS/Pod-Deploy-Source/vSphere/VMware-VCSA-all-6.5.0-5973321",
+        "ESXiAppliance": "/Users/smcgeown/Documents/SCRIPTS/Pod-Deploy-Source/ESXi/Nested_ESXi6.5d_Appliance_Template_v1.0.ova",
+        "NSXAppliance" : "/Users/smcgeown/Documents/SCRIPTS/Pod-Deploy-Source/NSX/VMware-NSX-Manager-6.4.0-7564187.ova"
     },
     "esxi": {
         "hosts": [
@@ -42,30 +40,13 @@
             }
         ],
         "cpu": "4",
-        "ram": "12",
-        "cacheDisk": "100",
-        "capacityDisk": "200",
+        "ram": "16",
+        "cacheDisk": "0",
+        "capacityDisk": "0",
         "createVMFS": false
     },
-    "psc": {
-        "deploymentSize": "infrastructure",
-        "name": "pod-203-psc",
-        "ip": "192.168.203.9",
-        "hostname": "192.168.203.9",
-        "rootPassword": "VMware1!",
-        "sso": {
-            "domain": "vsphere.local",
-            "site": "Pod203-Site",
-            "password": "VMware1!",
-            "replicationPartner": ""
-        },
-        "datacenter": "Pod203-Datacenter",
-        "cluster": "Pod203-Cluster-1",
-        "distributedSwitch": "Pod-203-VDS",
-        "portgroup": "VLAN203"
-    },
     "vcsa": {
-        "deploymentSize": "management-small",
+        "deploymentSize": "tiny",
         "name": "pod-203-vcsa",
         "ip": "192.168.203.10",
         "hostname": "192.168.203.10",
@@ -100,11 +81,18 @@
         "controller": {
             "startIp": "192.168.203.12",
             "endIp": "192.168.203.14",
-            "password": "VMware1!"
+            "password": "VMware1!VMware1!"
         },
         "vtep": {
             "startIp": "192.168.203.30",
             "endIp": "192.168.203.39"
         }
-    }
+    },
+    "nfs": [
+        {
+            "name": "NFS-01",
+            "path": "/volume1/SYN-NFS-01",
+            "server": "192.168.4.10"
+        }
+    ]
 }
