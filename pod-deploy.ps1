@@ -144,15 +144,15 @@ if(Test-Path -Path $podConfig.sources.VCSAInstaller) { Write-Log "VCSA Source: O
 if(Test-Path -Path $podConfig.sources.ESXiAppliance) { Write-Log "ESXi Source: OK" -Info } else { Write-Log "ESXi Source: Failed" -Warning; $preflightFailure = $true }
 if(Test-Path -Path $podConfig.sources.NSXAppliance) { Write-Log "NSX Source: OK" -Info } else { Write-Log "NSX Source: Failed" -Warning; $preflightFailure = $true }
 Write-Log "### Validating Target"
-$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password -ErrorAction SilentlyContinue
+$pVCSA = Get-VcConnection -vcsaName $podConfig.physical.server -vcsaUser $podConfig.physical.user -vcsaPassword $podConfig.physical.password -ErrorAction SilentlyContinue
 if($pVCSA) { Write-Log "Physical VCSA: OK" -Info } else { Write-Log "Physical VCSA: Failed" -Warning; $preflightFailure = $true }
-$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA -ErrorAction SilentlyContinue
+$pCluster = Get-Cluster -Name $podConfig.physical.cluster -Server $pVCSA -ErrorAction SilentlyContinue
 if($pCluster) { Write-Log "Physical Cluster: OK" -Info } else { Write-Log "Physical Cluster: Failed" -Warning; $preflightFailure = $true }
-$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA -ErrorAction SilentlyContinue
+$pDatastore = Get-Datastore -Name $podConfig.physical.datastore -Server $pVCSA -ErrorAction SilentlyContinue
 if($pDatastore) { Write-Log "Physical Datastore: OK" -Info } else { Write-Log "Physical Datastore: Failed" -Warning; $preflightFailure = $true }
-$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA -ErrorAction SilentlyContinue
+$pPortGroup = Get-VDPortgroup -Name $podConfig.physical.portgroup -Server $pVCSA -ErrorAction SilentlyContinue
 if($pPortGroup) { Write-Log "Physical Portgroup: OK" -Info } else { Write-Log "Physical Portgroup: Failed" -Warning; $preflightFailure = $true }
-$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder -ErrorAction SilentlyContinue
+$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.physical.folder -ErrorAction SilentlyContinue
 if($pFolder) { Write-Log "Physical Folder: OK" -Info } else { Write-Log "Physical Folder: Failed" -Warning; $preflightFailure = $true }
 $pHost = $pCluster | Get-VMHost -Server $pVCSA  -ErrorAction SilentlyContinue | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
 if($pHost) { Write-Log "Physical Host: OK" -Info } else { Write-Log "Physical Host: Failed" -Warning; $preflightFailure = $true }
@@ -162,11 +162,11 @@ if($pHost) { Write-Log "Physical Host: OK" -Info } else { Write-Log "Physical Ho
 
 if($deployESXi) {
 	Write-Log "#### Deploying Nested ESXi VMs ####"
-	$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
-	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
-	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
-	$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA
-	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder
+	$pVCSA = Get-VcConnection -vcsaName $podConfig.physical.server -vcsaUser $podConfig.physical.user -vcsaPassword $podConfig.physical.password
+	$pCluster = Get-Cluster -Name $podConfig.physical.cluster -Server $pVCSA
+	$pDatastore = Get-Datastore -Name $podConfig.physical.datastore -Server $pVCSA
+	$pPortGroup = Get-VDPortgroup -Name $podConfig.physical.portgroup -Server $pVCSA
+	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.physical.folder
 
 	if ($pDatastore.Type -eq "vsan") {
 		Write-Log "VSAN Datastore detected, checking Fake SCSI Reservations"
@@ -192,11 +192,11 @@ if($deployESXi) {
 			$ovfConfig = Get-ovfConfiguration -Ovf $podConfig.sources.ESXiAppliance
 			$ovfConfig.Common.guestinfo.hostname.Value = $nestedESXiName
 			$ovfConfig.Common.guestinfo.ipaddress.Value = $nestedESXiIPAddress
-			$ovfConfig.Common.guestinfo.netmask.Value = $podConfig.target.network.netmask
-			$ovfConfig.Common.guestinfo.gateway.Value = $podConfig.target.network.gateway
-			$ovfConfig.Common.guestinfo.dns.Value = $podConfig.target.network.dns
-			$ovfConfig.Common.guestinfo.domain.Value = $podConfig.target.network.domain
-			$ovfConfig.Common.guestinfo.ntp.Value = $podConfig.target.network.ntp
+			$ovfConfig.Common.guestinfo.netmask.Value = $podConfig.physical.network.netmask
+			$ovfConfig.Common.guestinfo.gateway.Value = $podConfig.physical.network.gateway
+			$ovfConfig.Common.guestinfo.dns.Value = $podConfig.physical.network.dns
+			$ovfConfig.Common.guestinfo.domain.Value = $podConfig.physical.network.domain
+			$ovfConfig.Common.guestinfo.ntp.Value = $podConfig.physical.network.ntp
 			$ovfConfig.Common.guestinfo.syslog.Value = $podConfig.general.syslog
 			$ovfConfig.Common.guestinfo.password.Value = $podConfig.general.password
 			$ovfConfig.Common.guestinfo.ssh.Value = $podConfig.general.ssh
@@ -264,31 +264,31 @@ if($deployESXi) {
 		}
 		Start-Sleep 5
 	}
-	Close-VcConnection -vcsaName $podConfig.target.server
+	Close-VcConnection -vcsaName $podConfig.physical.server
 	Write-Log "#### Nested ESXi VMs Deployed ####"
 }
 
 if($deployVCSA) {
 	Write-Log "#### Deploying vCenter Server Appliance(s) ####"
-	$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
-	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
-	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
-	$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA
-	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder
+	$pVCSA = Get-VcConnection -vcsaName $podConfig.physical.server -vcsaUser $podConfig.physical.user -vcsaPassword $podConfig.physical.password
+	$pCluster = Get-Cluster -Name $podConfig.physical.cluster -Server $pVCSA
+	$pDatastore = Get-Datastore -Name $podConfig.physical.datastore -Server $pVCSA
+	$pPortGroup = Get-VDPortgroup -Name $podConfig.physical.portgroup -Server $pVCSA
+	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.physical.folder
 
-	Write-Log "Disabling DRS on $($podConfig.target.cluster)"
+	Write-Log "Disabling DRS on $($podConfig.physical.cluster)"
 	$pCluster | Set-Cluster -DrsEnabled:$false -Confirm:$false |  Out-File -Append -LiteralPath $verboseLogFile
 
 	if($podConfig.psc -ne $null) {
 		Write-Log "##### Deploying external PSC #####"
 		$config = (Get-Content -Raw $externalPSCconfig) | convertfrom-json
-		$config.'new.vcsa'.vc.hostname = $podConfig.target.server
-		$config.'new.vcsa'.vc.username = $podConfig.target.user
-		$config.'new.vcsa'.vc.password = $podConfig.target.password
-		$config.'new.vcsa'.vc.datacenter = @($podConfig.target.datacenter)
-		$config.'new.vcsa'.vc.datastore = $podConfig.target.datastore
-		$config.'new.vcsa'.vc.target = @($podConfig.target.cluster)
-		$config.'new.vcsa'.vc.'deployment.network' = $podConfig.target.portgroup
+		$config.'new.vcsa'.vc.hostname = $podConfig.physical.server
+		$config.'new.vcsa'.vc.username = $podConfig.physical.user
+		$config.'new.vcsa'.vc.password = $podConfig.physical.password
+		$config.'new.vcsa'.vc.datacenter = @($podConfig.physical.datacenter)
+		$config.'new.vcsa'.vc.datastore = $podConfig.physical.datastore
+		$config.'new.vcsa'.vc.target = @($podConfig.physical.cluster)
+		$config.'new.vcsa'.vc.'deployment.network' = $podConfig.physical.portgroup
 		$config.'new.vcsa'.appliance.'thin.disk.mode' = $true
 		$config.'new.vcsa'.appliance.'deployment.option' = $podConfig.psc.deploymentSize
 		$config.'new.vcsa'.appliance.name = $podConfig.psc.name
@@ -296,9 +296,9 @@ if($deployVCSA) {
 		$config.'new.vcsa'.network.'ip.family' = "ipv4"
 		$config.'new.vcsa'.network.mode = "static"
 		$config.'new.vcsa'.network.ip = $podConfig.psc.ip
-		$config.'new.vcsa'.network.'dns.servers'[0] = $podConfig.target.network.dns
-		$config.'new.vcsa'.network.prefix = $podConfig.target.network.prefix
-		$config.'new.vcsa'.network.gateway = $podConfig.target.network.gateway
+		$config.'new.vcsa'.network.'dns.servers'[0] = $podConfig.physical.network.dns
+		$config.'new.vcsa'.network.prefix = $podConfig.physical.network.prefix
+		$config.'new.vcsa'.network.gateway = $podConfig.physical.network.gateway
 		$config.'new.vcsa'.os.'ssh.enable' = $podConfig.general.ssh
 		$config.'new.vcsa'.os.password = $podConfig.psc.rootPassword
 		$config.'new.vcsa'.sso.password = $podConfig.psc.sso.password
@@ -318,7 +318,7 @@ if($deployVCSA) {
 			Write-Log "Deploying OVF, this may take a while..."
 			Invoke-Expression "$($vcsaDeploy) install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($temp)\psctemplate.json"| Out-File -Append -LiteralPath $verboseLogFile
 			$vcsaDeployOutput | Out-File -Append -LiteralPath $verboseLogFile
-			Write-Log "Moving $($podConfig.psc.name) to $($podConfig.target.folder)"
+			Write-Log "Moving $($podConfig.psc.name) to $($podConfig.physical.folder)"
 			if((Get-VM | Where-Object {$_.name -eq $podConfig.psc.name}) -eq $null) {
 				throw "Could not find VCSA VM. The script was unable to find the deployed VCSA"
 			}
@@ -341,13 +341,13 @@ if($deployVCSA) {
 			# Embedded PSC Specific config
 			$config.'new.vcsa'.sso.'site-name' = $podConfig.vcsa.sso.site
 		}
-		$config.'new.vcsa'.vc.hostname = $podConfig.target.server
-		$config.'new.vcsa'.vc.username = $podConfig.target.user
-		$config.'new.vcsa'.vc.password = $podConfig.target.password
-		$config.'new.vcsa'.vc.datacenter = @($podConfig.target.datacenter)
-		$config.'new.vcsa'.vc.datastore = $podConfig.target.datastore
-		$config.'new.vcsa'.vc.target = @($podConfig.target.cluster)
-		$config.'new.vcsa'.vc.'deployment.network' = $podConfig.target.portgroup
+		$config.'new.vcsa'.vc.hostname = $podConfig.physical.server
+		$config.'new.vcsa'.vc.username = $podConfig.physical.user
+		$config.'new.vcsa'.vc.password = $podConfig.physical.password
+		$config.'new.vcsa'.vc.datacenter = @($podConfig.physical.datacenter)
+		$config.'new.vcsa'.vc.datastore = $podConfig.physical.datastore
+		$config.'new.vcsa'.vc.target = @($podConfig.physical.cluster)
+		$config.'new.vcsa'.vc.'deployment.network' = $podConfig.physical.portgroup
 		$config.'new.vcsa'.os.'ssh.enable' = $podConfig.general.ssh
 		$config.'new.vcsa'.os.password = $podConfig.vcsa.rootPassword
 		$config.'new.vcsa'.appliance.'thin.disk.mode' = $true
@@ -357,9 +357,9 @@ if($deployVCSA) {
 		$config.'new.vcsa'.network.'ip.family' = "ipv4"
 		$config.'new.vcsa'.network.mode = "static"
 		$config.'new.vcsa'.network.ip = $podConfig.vcsa.ip
-		$config.'new.vcsa'.network.'dns.servers'[0] = $podConfig.target.network.dns
-		$config.'new.vcsa'.network.prefix = $podConfig.target.network.prefix
-		$config.'new.vcsa'.network.gateway = $podConfig.target.network.gateway
+		$config.'new.vcsa'.network.'dns.servers'[0] = $podConfig.physical.network.dns
+		$config.'new.vcsa'.network.prefix = $podConfig.physical.network.prefix
+		$config.'new.vcsa'.network.gateway = $podConfig.physical.network.gateway
 		$config.'new.vcsa'.sso.password = $podConfig.vcsa.sso.password
 		$config.'new.vcsa'.sso.'domain-name' = $podConfig.vcsa.sso.domain
 		Write-Log "Creating VCSA JSON Configuration file for deployment"
@@ -369,7 +369,7 @@ if($deployVCSA) {
 			Write-Log "$($vcsaDeploy) install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($temp)vctemplate.json"  -Warning
 			Invoke-Expression "$($vcsaDeploy) install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($temp)vctemplate.json" | Out-File -Append -LiteralPath $verboseLogFile
 			$vcsaDeployOutput | Out-File -Append -LiteralPath $verboseLogFile
-			Write-Log "Moving $($podConfig.vcsa.name) to $($podConfig.target.folder)"
+			Write-Log "Moving $($podConfig.vcsa.name) to $($podConfig.physical.folder)"
 			if((Get-VM | Where-Object {$_.name -eq $podConfig.vcsa.name}) -eq $null) {
 				throw "Could not find VCSA VM. The script was unable to find the deployed VCSA"
 			}
@@ -377,10 +377,10 @@ if($deployVCSA) {
 		} else {
 			Write-Log "VCSA exists, skipping" -Warning
 		}
-		Write-Log "Enabling DRS on $($podConfig.target.cluster)"
+		Write-Log "Enabling DRS on $($podConfig.physical.cluster)"
 		$pCluster | Set-Cluster -DrsEnabled:$true -Confirm:$false |  Out-File -Append -LiteralPath $verboseLogFile
 	}
-	Close-VcConnection -vcsaName $podConfig.target.server
+	Close-VcConnection -vcsaName $podConfig.physical.server
 }
 
 
@@ -437,9 +437,10 @@ if($configureVCSA) {
 	}
 
 	if($podConfig.nfs.count -gt 0) {
+		Write-Log "## Adding NFS shares to hosts ##"
 		$nHosts = Get-VMHost -Server $nVCSA -Location $nCluster
 		foreach($nfs in $podConfig.nfs) {
-			Write-Log "Adding NFS Share $($nfs.name)" -Info
+			Write-Log "Adding NFS share $($nfs.name)" -Info
 			if(Get-Datastore -Name $nfs.name -ErrorAction SilentlyContinue) {
 				Write-Log "Datastore $($nfs.name) exists, skipping" -Warning
 			} else {
@@ -558,31 +559,31 @@ if($configureVCSA) {
 
 if($DeployNSXManager) {
 	Write-Log "#### Deploying NSX Manager ####"
-	$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
-	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
-	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
-	$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA
-	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder
+	$pVCSA = Get-VcConnection -vcsaName $podConfig.physical.server -vcsaUser $podConfig.physical.user -vcsaPassword $podConfig.physical.password
+	$pCluster = Get-Cluster -Name $podConfig.physical.cluster -Server $pVCSA
+	$pDatastore = Get-Datastore -Name $podConfig.physical.datastore -Server $pVCSA
+	$pPortGroup = Get-VDPortgroup -Name $podConfig.physical.portgroup -Server $pVCSA
+	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.physical.folder
 	$pESXi = $pCluster | Get-VMHost -Server $pVCSA | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
 
 	if((Get-VM -Server $pVCSA | Where-Object -Property Name -eq -Value $podConfig.nsx.name) -eq $null) {
 		$ovfconfig = @{
 			"vsm_cli_en_passwd_0" = "$($podConfig.nsx.password)"
-			"NetworkMapping.VSMgmt" = "$($podConfig.target.portgroup)"
-			"vsm_gateway_0" = "$($podConfig.target.network.gateway)"
+			"NetworkMapping.VSMgmt" = "$($podConfig.physical.portgroup)"
+			"vsm_gateway_0" = "$($podConfig.physical.network.gateway)"
 			"vsm_cli_passwd_0" = "$($podConfig.nsx.password)"
 			"vsm_isSSHEnabled" = "$($podConfig.general.ssh)"
-			"vsm_netmask_0" = "$($podConfig.target.network.netmask)"
-			"vsm_hostname" = "$($podConfig.nsx.name).$($podConfig.target.network.domain)"
-			"vsm_ntp_0" = "$($podConfig.target.network.ntp)"
+			"vsm_netmask_0" = "$($podConfig.physical.network.netmask)"
+			"vsm_hostname" = "$($podConfig.nsx.name).$($podConfig.physical.network.domain)"
+			"vsm_ntp_0" = "$($podConfig.physical.network.ntp)"
 			"vsm_ip_0" = "$($podConfig.nsx.ip)"
-			"vsm_dns1_0" = "$($podConfig.target.network.dns)"
-			"vsm_domain_0" = "$($podConfig.target.network.domain)"
+			"vsm_dns1_0" = "$($podConfig.physical.network.dns)"
+			"vsm_domain_0" = "$($podConfig.physical.network.domain)"
 		}
 		Write-Log "Deploying NSX Manager OVA"
 		Import-VApp -Server $pVCSA -VMhost $pESXi -Source $podConfig.sources.NSXAppliance -OVFConfiguration $ovfconfig -Name $podConfig.nsx.name -Datastore $pDatastore -DiskStorageFormat thin | Out-File -Append -LiteralPath $verboseLogFile
 		$NSX = Get-VM -Name $podConfig.nsx.name -Server $pVCSA
-		Write-Log "Moving $($podConfig.nsx.name) to $($podConfig.target.folder) folder"
+		Write-Log "Moving $($podConfig.nsx.name) to $($podConfig.physical.folder) folder"
 		Move-VM -VM $NSX -Destination $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
 		Write-Log "Powering On $($podConfig.nsx.name)" -Info
 		Start-VM -Server $pVCSA -VM $NSX -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
@@ -632,7 +633,7 @@ if($configureNSX) {
 		Write-Log "NSX Manager connected to SSO"
 	}
 	if((Get-NsxIpPool -Name "Controllers") -eq $null) {
-		New-NsxIPPool -Name "Controllers" -Gateway $podConfig.target.network.gateway -SubnetPrefixLength $podConfig.target.network.prefix -StartAddress $podConfig.nsx.controller.startIp -EndAddress $podConfig.nsx.controller.endIp -DnsServer1 $podConfig.target.network.dns -DnsSuffix $podConfig.target.network.domain |  Out-File -Append -LiteralPath $verboseLogFile
+		New-NsxIPPool -Name "Controllers" -Gateway $podConfig.physical.network.gateway -SubnetPrefixLength $podConfig.physical.network.prefix -StartAddress $podConfig.nsx.controller.startIp -EndAddress $podConfig.nsx.controller.endIp -DnsServer1 $podConfig.physical.network.dns -DnsSuffix $podConfig.physical.network.domain |  Out-File -Append -LiteralPath $verboseLogFile
 	} else {
 		Write-Log "NSX IP Pool exists, skipping" -Warning
 	}
@@ -664,7 +665,7 @@ if($configureNSX) {
 	}
 	Write-Log "Creating VTEP IP Pool"
 	if((Get-NsxIpPool -Name "VTEPs") -eq $null) {
-		New-NsxIPPool -Name "VTEPs" -Gateway $podConfig.target.network.gateway -SubnetPrefixLength $podConfig.target.network.prefix -StartAddress $podConfig.nsx.vtep.startIp -EndAddress $podConfig.nsx.vtep.endIp -DnsServer1 $podConfig.target.network.dns -DnsSuffix $podConfig.target.network.domain |  Out-File -Append -LiteralPath $verboseLogFile
+		New-NsxIPPool -Name "VTEPs" -Gateway $podConfig.physical.network.gateway -SubnetPrefixLength $podConfig.physical.network.prefix -StartAddress $podConfig.nsx.vtep.startIp -EndAddress $podConfig.nsx.vtep.endIp -DnsServer1 $podConfig.physical.network.dns -DnsSuffix $podConfig.physical.network.domain |  Out-File -Append -LiteralPath $verboseLogFile
 	} else {
 		Write-Log "VTEP IP Pool exists, skipping" -Warning
 	}
@@ -698,11 +699,11 @@ if($configureNSX) {
 # 	$ovfConfig.NetworkMapping.Network_1.value = $Network
 # 	$ovfConfig.IpAssignment.IpProtocol.value = "IPv4"
 # 	$ovfConfig.vami.VMware_vRealize_Appliance.ip0.value = $vRAAppIpAddress
-# 	$ovfConfig.vami.VMware_vRealize_Appliance.netmask0.value = $podConfig.target.network.netmask
-# 	$ovfConfig.vami.VMware_vRealize_Appliance.gateway.value = $podConfig.target.network.gateway
-# 	$ovfConfig.vami.VMware_vRealize_Appliance.DNS.value = $podConfig.target.network.dns
-# 	$ovfConfig.vami.VMware_vRealize_Appliance.domain.value  = $podConfig.target.network.domain
-# 	$ovfConfig.vami.VMware_vRealize_Appliance.searchpath.value = $podConfig.target.network.domain
+# 	$ovfConfig.vami.VMware_vRealize_Appliance.netmask0.value = $podConfig.physical.network.netmask
+# 	$ovfConfig.vami.VMware_vRealize_Appliance.gateway.value = $podConfig.physical.network.gateway
+# 	$ovfConfig.vami.VMware_vRealize_Appliance.DNS.value = $podConfig.physical.network.dns
+# 	$ovfConfig.vami.VMware_vRealize_Appliance.domain.value  = $podConfig.physical.network.domain
+# 	$ovfConfig.vami.VMware_vRealize_Appliance.searchpath.value = $podConfig.physical.network.domain
 # 	$ovfConfig.common.varoot_password.value = $podConfig.general.password
 # 	$ovfConfig.common.va_ssh_enabled.value = $podConfig.general.ssh
 # 	$vRAVM = Import-VApp -Server $vCenter -VMHost $pEsxi -Source $vRAAppliance -ovfConfiguration $ovfConfig -Name $vRAAppName -Location $cluster -Datastore $datastore -DiskStorageFormat thin

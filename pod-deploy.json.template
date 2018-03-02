@@ -1,7 +1,7 @@
 {
     "__version": "0.2",
-    "__comments": "Configuration for pod-deploy.ps1 - www.definit.co.uk",
-    "target": {
+    "__comments": "Configuration for pod-deploy.ps1 - www.definit.co.uk - https://github.com/sammcgeown/Pod-Deploy",
+    "physical": {
         "server": "vcsa.definit.local",
         "user": "administrator@vsphere.local",
         "password": "VMware1!",
