@@ -1,7 +1,6 @@
 param(
 	[Parameter(Mandatory=$true)] [String]$configFile,
 	[switch]$deployESXi,
-	[switch]$patchESXi,
 	[switch]$deployVCSA,
 	[switch]$configureVCSA,
 	[switch]$licenseVCSA,
@@ -12,7 +11,7 @@ param(
 	[switch]$configureNSX,
 	[switch]$deployvRAAppliance
 )
-Get-Module -ListAvailable VMware*,PowerNSX | Import-Module
+Get-Module -ListAvailable VMware.PowerCLI,PowerNSX | Import-Module -ErrorAction SilentlyContinue
 if ( !(Get-Module -Name VMware.VimAutomation.Core -ErrorAction SilentlyContinue) ) {
 	throw "PowerCLI must be installed"
 }
@@ -29,16 +28,37 @@ if ( !(Get-Module -Name VMware.VimAutomation.Core -ErrorAction SilentlyContinue)
 $podConfig = (get-content $($configFile) -Raw) | ConvertFrom-Json
 
 
-$VCSAInstaller  = "$($podConfig.sources.VCSAInstaller)"
-$ESXiAppliance  = "$($podConfig.sources.ESXiAppliance)"
-$NSXAppliance   = "$($podConfig.sources.NSXAppliance)"
-#$vRAAppliance   = "$($podConfig.sources.vRAAppliance)"
-$ESXi65aBundle	= "$($podConfig.sources.ESXiPatch)"
-
 # Log File
 $verboseLogFile = $podConfig.general.log
 
 $StartTime = Get-Date
+
+# Platform independant temp directory...
+if($env:TMPDIR) { $temp = $env:TMPDIR } elseif ($env:TMP) { $temp = $env:TMP } else { $temp = "/tmp" }
+
+# There must be an easier way than this...
+switch ($PSVersionTable.PSEdition) {
+	"Core" {
+		# Mac, Linux or Windows
+		if($PSVersionTable.OS -match "Darwin") {
+			# Mac
+			$vcsaDeploy = "$($podConfig.sources.VCSAInstaller)/vcsa-cli-installer/mac/vcsa-deploy"
+		} elseif ($PSVersionTable.OS -match "Linux") {
+			# Linux
+			$vcsaDeploy = "$($podConfig.sources.VCSAInstaller)/vcsa-cli-installer/lin64/vcsa-deploy"
+		} else {
+			# Windows
+			$vcsaDeploy = "$($podConfig.sources.VCSAInstaller)\vcsa-cli-installer\win32\vcsa-deploy.exe"
+		}
+	}
+	"Desktop" {
+		# Windows
+		$vcsaDeploy = "$($podConfig.sources.VCSAInstaller)\vcsa-cli-installer\win32\vcsa-deploy.exe"
+	}
+}
+$externalPSCconfig = "$($podConfig.sources.VCSAInstaller)\vcsa-cli-installer\templates\install\PSC_first_instance_on_VC.json"
+$externalVCSAconfig = "$($podConfig.sources.VCSAInstaller)\vcsa-cli-installer\templates\install\vCSA_on_VC.json"
+$embeddedVCSAconfig = "$($podConfig.sources.VCSAInstaller)\vcsa-cli-installer\templates\install\embedded_vCSA_on_VC.json"
 
 Function Write-Log {
 	param(
@@ -56,17 +76,17 @@ Function Write-Log {
 	}else {
 		Write-Host -ForegroundColor Green " $message"
 	}
-	$logMessage = "[$timeStamp] $message" | Out-File -Append -LiteralPath $verboseLogFile
+	"[$timeStamp] $message" | Out-File -Append -LiteralPath $verboseLogFile
 }
 
-function Get-VCSAConnection {
+function Get-VcConnection {
 	param(
 		[string]$vcsaName,
 		[string]$vcsaUser,
 		[string]$vcsaPassword
 	)
-	Write-Log "Getting connection for $($vcsaName)"
-	$existingConnection =  $global:DefaultVIServers | where-object -Property Name -eq -Value $vcsaName
+	#Write-Log "Getting connection for $($vcsaName)"
+	$existingConnection =  $global:DefaultVIServers | Where-Object -Property Name -eq -Value $vcsaName
 	if($existingConnection -ne $null) {
 		return $existingConnection;
 	} else {
@@ -75,7 +95,7 @@ function Get-VCSAConnection {
 	}
 }
 
-function Close-VCSAConnection {
+function Close-VcConnection {
 	param(
 		[string]$vcsaName
 	)
@@ -85,7 +105,7 @@ function Close-VCSAConnection {
 			Disconnect-VIServer -Server $Global:DefaultVIServers -Confirm:$false
 		}
 	} else {
-		$existingConnection =  $global:DefaultVIServers | where-object -Property Name -eq -Value $vcsaName
+		$existingConnection =  $global:DefaultVIServers | Where-Object -Property Name -eq -Value $vcsaName
         if($existingConnection -ne $null) {
             Write-Log -Message "Disconnecting from $($vcsaName)"
 			Disconnect-VIServer -Server $existingConnection -Confirm:$false;
@@ -113,9 +133,31 @@ function Get-PodFolder {
 	return $parentFolder
 }
 
+Write-Log "#### Validating Configuration ####"
+Write-Log "### Testing Sources"
+if(Test-Path -Path $podConfig.sources.VCSAInstaller) { Write-Log "VCSA Source: OK" } else { Write-Log "VCSA Source: Failed" -Warning; $preflightFailure = $true }
+if(Test-Path -Path $podConfig.sources.ESXiAppliance) { Write-Log "ESXi Source: OK" } else { Write-Log "ESXi Source: Failed" -Warning; $preflightFailure = $true }
+if(Test-Path -Path $podConfig.sources.NSXAppliance) { Write-Log "NSX Source: OK" } else { Write-Log "NSX Source: Failed" -Warning; $preflightFailure = $true }
+Write-Log "### Validating Target"
+$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password -ErrorAction SilentlyContinue
+if($pVCSA) { Write-Log "Physical VCSA: OK" } else { Write-Log "Physical VCSA: Failed" -Warning; $preflightFailure = $true }
+$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA -ErrorAction SilentlyContinue
+if($pCluster) { Write-Log "Physical Cluster: OK" } else { Write-Log "Physical Cluster: Failed" -Warning; $preflightFailure = $true }
+$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA -ErrorAction SilentlyContinue
+if($pDatastore) { Write-Log "Physical Datastore: OK" } else { Write-Log "Physical Datastore: Failed" -Warning; $preflightFailure = $true }
+$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA -ErrorAction SilentlyContinue
+if($pPortGroup) { Write-Log "Physical Portgroup: OK" } else { Write-Log "Physical Portgroup: Failed" -Warning; $preflightFailure = $true }
+$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder -ErrorAction SilentlyContinue
+if($pFolder) { Write-Log "Physical Folder: OK" } else { Write-Log "Physical Folder: Failed" -Warning; $preflightFailure = $true }
+$pHost = $pCluster | Get-VMHost -Server $pVCSA  -ErrorAction SilentlyContinue | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
+if($pHost) { Write-Log "Physical Host: OK" } else { Write-Log "Physical Host: Failed" -Warning; $preflightFailure = $true }
+
+
+
+
 if($deployESXi) {
 	Write-Log "#### Deploying Nested ESXi VMs ####"
-	$pVCSA = Get-VCSAConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
+	$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
 	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
 	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
 	$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA
@@ -136,15 +178,13 @@ if($deployESXi) {
 	$deployTasks = @()
  
 	$podConfig.esxi.hosts | ForEach-Object {
-		Write-Log "Selecting a host from $($podConfig.target.cluster)"
-		$pESXi = $pCluster | Get-VMHost -Server $pVCSA | where { $_.ConnectionState -eq "Connected" } | Get-Random
-		Write-Log "$($pESXi) selected."
+		$pESXi = $pCluster | Get-VMHost -Server $pVCSA | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
 
 		$nestedESXiName = $_.name
 		$nestedESXiIPAddress = $_.ip
 
 		if((Get-VM | Where-Object -Property Name -eq -Value $nestedESXiName) -eq $null) {
-			$ovfConfig = Get-ovfConfiguration -Ovf $ESXiAppliance
+			$ovfConfig = Get-ovfConfiguration -Ovf $podConfig.sources.ESXiAppliance
 			$ovfConfig.Common.guestinfo.hostname.Value = $nestedESXiName
 			$ovfConfig.Common.guestinfo.ipaddress.Value = $nestedESXiIPAddress
 			$ovfConfig.Common.guestinfo.netmask.Value = $podConfig.target.network.netmask
@@ -158,9 +198,8 @@ if($deployESXi) {
 			$ovfConfig.Common.guestinfo.createvmfs.Value = $podConfig.esxi.createVMFS
 			$ovfConfig.NetworkMapping.VM_Network.Value = $pPortGroup
 
-			Write-Log "Deploying Nested ESXi VM $($nestedESXiName)"
-			#$deployTasks[(Import-VApp -Server $pVCSA -VMHost $pESXi -Source $ESXiAppliance -ovfConfiguration $ovfConfig -Name $nestedESXiName -Location $pCluster -Datastore $pDatastore -DiskStorageFormat thin -RunAsync -ErrorAction SilentlyContinue).Id] = $nestedESXiName
-			$task = Import-VApp -Server $pVCSA -VMHost $pESXi -Source $ESXiAppliance -ovfConfiguration $ovfConfig -Name $nestedESXiName -Location $pCluster -Datastore $pDatastore -DiskStorageFormat thin -RunAsync -ErrorAction SilentlyContinue
+			Write-Log "Deploying Nested ESXi VM $($nestedESXiName) to $($pESXi)"
+			$task = Import-VApp -Server $pVCSA -VMHost $pESXi -Source $podConfig.sources.ESXiAppliance -ovfConfiguration $ovfConfig -Name $nestedESXiName -Location $pCluster -Datastore $pDatastore -DiskStorageFormat thin -RunAsync -ErrorAction SilentlyContinue
 			$deployTasks += $task
 		} else {
 			Write-Log "Nested ESXi host $($nestedESXiName) exists, skipping" -Warning
@@ -169,35 +208,39 @@ if($deployESXi) {
 
 	$taskCount = $deployTasks.Count
 	while($taskCount -gt 0) {
-		Write-Log "Task count $($taskCount)"
 		$deployTasks | ForEach-Object {
-			Write-Log -Message "Task $($_.Id) - $($_.State) - $($_.PercentComplete)%"
+			#Write-Log -Message "Task $($_.Id) - $($_.State) - $($_.PercentComplete)%"
+			Write-Progress -Activity "Deploying ESXi ($($_.Id))" -Status "$($_.PercentComplete)% Complete" -PercentComplete $_.PercentComplete
 			if($_.State -eq "Success") {
 				# Deployment Completed
-				Write-Log "Deployment task $($_.Id) ($($_.Result)) succeeded, configuring"
-
+				Write-Progress -Activity "Deploying ESXi ($($_.Result))" -Completed
 				$nestedESXiVM = Get-VM -Name $_.Result -Server $pVCSA
+				$nestedESXiName = $nestedESXiVM.Name
 
-				Write-Log "Updating vCPU Count to $($podConfig.esxi.cpu) & vMEM to $($podConfig.esxi.ram) GB"
+				Write-Log "$($nestedESXiName): Updating vCPU ($($podConfig.esxi.cpu)) & RAM ($($podConfig.esxi.ram)GB)"
 				$nestedESXiVM | Set-VM -NumCpu $podConfig.esxi.cpu -MemoryGB $podConfig.esxi.ram -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 
-				Write-Log "Updating vSAN Caching VMDK size to $($podConfig.esxi.cacheDisk) GB"
+				Write-Log "$($nestedESXiName): Updating vSAN Caching disk to $($podConfig.esxi.cacheDisk)GB"
 				# Work around for VSAN issue with not enough disk space - delete and add new disk
-				Get-HardDisk -VM $nestedESXiVM | where-object -Property "CapacityGB" -eq -Value 4 | Remove-HardDisk -DeletePermanently -Confirm:$false
-				#New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.cacheDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+				Get-HardDisk -VM $nestedESXiVM | Where-Object -Property "CapacityGB" -eq -Value 4 | Remove-HardDisk -DeletePermanently -Confirm:$false
+				if($podConfig.esxi.capacityDisk > 0) {
+					New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.cacheDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+					New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:1.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
+				}
 
-				Write-Log "Updating vSAN Capacity VMDK size to $($podConfig.esxi.capacityDisk) GB"
+				Write-Log "$($nestedESXiName): Updating vSAN Capacity disk to $($podConfig.esxi.capacityDisk) GB"
 				# Work around for VSAN issue with not enough disk space - delete and add new disk
-				Get-HardDisk -VM $nestedESXiVM | where-object -Property "CapacityGB" -eq -Value 8 | Remove-HardDisk -DeletePermanently -Confirm:$false
-				New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.capacityDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+				Get-HardDisk -VM $nestedESXiVM | Where-Object -Property "CapacityGB" -eq -Value 8 | Remove-HardDisk -DeletePermanently -Confirm:$false
+				if($podConfig.esxi.capacityDisk > 0) {
+					New-HardDisk -VM $nestedESXiVM -Persistence persistent -SizeGB $podConfig.esxi.capacityDisk -StorageFormat Thin | Out-File -Append -LiteralPath $verboseLogFile
+					New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:2.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
+				}
 
 				# Ensure the disks are marked as SSD
 				New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:0.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
-				New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:1.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
-				New-AdvancedSetting -Entity $nestedESXiVM -Name 'scsi0:2.virtualSSD' -Value $true -Confirm:$false -Force | Out-File -Append -LiteralPath $verboseLogFile
 
 				Write-Log "Moving $nestedESXiName to $($pFolder.Name) folder"
-				Move-VM -VM $nestedESXiVM -Destination $pFolder | Out-File -Append -LiteralPath $verboseLogFile
+				Move-VM -VM $nestedESXiVM -InventoryLocation $pFolder | Out-File -Append -LiteralPath $verboseLogFile
 
 				Write-Log "Powering On $nestedESXiName"
 				Start-VM -VM $nestedESXiVM -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
@@ -207,21 +250,22 @@ if($deployESXi) {
 				$taskCount--
 
 			} elseif($_.State -eq "Error") {
+				Write-Progress -Activity "Deploying ESXi ($($_.Result))" -Completed
 				Write-Log -Message " failed to deploy" -Warning
 				$failedTask = $_
 				$deployTasks = $deployTasks | Where-Object $_.Id -ne ($failedTask.Id)
 				$taskCount--
 			}
 		}
-		Start-Sleep 30
+		Start-Sleep 5
 	}
-	Close-VCSAConnection -vcsaName $podConfig.target.server
+	Close-VcConnection -vcsaName $podConfig.target.server
 	Write-Log "#### Nested ESXi VMs Deployed ####"
 }
 
 if($deployVCSA) {
 	Write-Log "#### Deploying vCenter Server Appliance(s) ####"
-	$pVCSA = Get-VCSAConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
+	$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
 	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
 	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
 	$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA
@@ -232,7 +276,7 @@ if($deployVCSA) {
 
 	if($podConfig.psc -ne $null) {
 		Write-Log "##### Deploying external PSC #####"
-		$config = (Get-Content -Raw "$($VCSAInstaller)\vcsa-cli-installer\templates\install\PSC_first_instance_on_VC.json") | convertfrom-json
+		$config = (Get-Content -Raw $externalPSCconfig) | convertfrom-json
 		$config.'new.vcsa'.vc.hostname = $podConfig.target.server
 		$config.'new.vcsa'.vc.username = $podConfig.target.user
 		$config.'new.vcsa'.vc.password = $podConfig.target.password
@@ -263,17 +307,17 @@ if($deployVCSA) {
 			$config.'new.vcsa'.sso | Add-Member -Name "replication-partner-hostname" -Value $podConfig.psc.sso.replicationPartner -MemberType NoteProperty
 		}
 		Write-Log "Creating PSC JSON Configuration file for deployment"
-		$config | ConvertTo-Json | Set-Content -Path "$($ENV:Temp)\psctemplate.json"
+		$config | ConvertTo-Json | Set-Content -Path "$($temp)\psctemplate.json"
 
 		if((Get-VM | Where-Object -Property Name -eq -Value $podConfig.psc.name) -eq $null) {
 			Write-Log "Deploying OVF, this may take a while..."
-			Invoke-Expression "$($VCSAInstaller)\vcsa-cli-installer\win32\vcsa-deploy.exe install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($ENV:Temp)\psctemplate.json"| Out-File -Append -LiteralPath $verboseLogFile
+			Invoke-Expression "$($vcsaDeploy) install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($temp)\psctemplate.json"| Out-File -Append -LiteralPath $verboseLogFile
 			$vcsaDeployOutput | Out-File -Append -LiteralPath $verboseLogFile
 			Write-Log "Moving $($podConfig.psc.name) to $($podConfig.target.folder)"
-			if((Get-VM | where {$_.name -eq $podConfig.psc.name}) -eq $null) {
+			if((Get-VM | Where-Object {$_.name -eq $podConfig.psc.name}) -eq $null) {
 				throw "Could not find VCSA VM. The script was unable to find the deployed VCSA"
 			}
-			Get-VM -Name $podConfig.psc.name | Move-VM -Destination $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
+			Get-VM -Name $podConfig.psc.name | Move-VM -InventoryLocation $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
 		} else {
 			Write-Log "PSC exists, skipping" -Warning
 		}
@@ -282,13 +326,13 @@ if($deployVCSA) {
 	if($podConfig.vcsa -ne $null) {
 		if($podConfig.psc -ne $null) {
 			Write-Log "##### Deploying VCSA with external PSC #####"
-			$config = (Get-Content -Raw "$($VCSAInstaller)\vcsa-cli-installer\templates\install\vCSA_on_VC.json") | convertfrom-json
+			$config = (Get-Content -Raw $externalVCSAconfig) | convertfrom-json
 			# External PSC Specific config
 			$config.'new.vcsa'.sso.'sso.port' = "443"
 			$config.'new.vcsa'.sso.'platform.services.controller' = $podConfig.psc.ip
 		} else {
 			Write-Log "##### Deploying VCSA with embedded PSC #####"
-			$config = (Get-Content -Raw "$($VCSAInstaller)\vcsa-cli-installer\templates\install\embedded_vCSA_on_VC.json") | convertfrom-json
+			$config = (Get-Content -Raw $embeddedVCSAconfig) | convertfrom-json
 			# Embedded PSC Specific config
 			$config.'new.vcsa'.sso.'site-name' = $podConfig.vcsa.sso.site
 		}
@@ -314,29 +358,30 @@ if($deployVCSA) {
 		$config.'new.vcsa'.sso.password = $podConfig.vcsa.sso.password
 		$config.'new.vcsa'.sso.'domain-name' = $podConfig.vcsa.sso.domain
 		Write-Log "Creating VCSA JSON Configuration file for deployment"
-		$config | ConvertTo-Json | Set-Content -Path "$($ENV:Temp)\vctemplate.json"
+		$config | ConvertTo-Json | Set-Content -Path "$($temp)vctemplate.json"
 		if((Get-VM | Where-Object -Property Name -eq -Value $podConfig.vcsa.name) -eq $null) {
 			Write-Log "Deploying OVF, this may take a while..."
-			Invoke-Expression "$($VCSAInstaller)\vcsa-cli-installer\win32\vcsa-deploy.exe install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($ENV:Temp)\vctemplate.json"| Out-File -Append -LiteralPath $verboseLogFile
+			Write-Log "$($vcsaDeploy) install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($temp)vctemplate.json"  -Warning
+			Invoke-Expression "$($vcsaDeploy) install --no-esx-ssl-verify --accept-eula --acknowledge-ceip $($temp)vctemplate.json" | Out-File -Append -LiteralPath $verboseLogFile
 			$vcsaDeployOutput | Out-File -Append -LiteralPath $verboseLogFile
 			Write-Log "Moving $($podConfig.vcsa.name) to $($podConfig.target.folder)"
-			if((Get-VM | where {$_.name -eq $podConfig.vcsa.name}) -eq $null) {
+			if((Get-VM | Where-Object {$_.name -eq $podConfig.vcsa.name}) -eq $null) {
 				throw "Could not find VCSA VM. The script was unable to find the deployed VCSA"
 			}
-			Get-VM -Name $podConfig.vcsa.name | Move-VM -Destination $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
+			Get-VM -Name $podConfig.vcsa.name | Move-VM -InventoryLocation $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
 		} else {
 			Write-Log "VCSA exists, skipping" -Warning
 		}
 		Write-Log "Enabling DRS on $($podConfig.target.cluster)"
 		$pCluster | Set-Cluster -DrsEnabled:$true -Confirm:$false |  Out-File -Append -LiteralPath $verboseLogFile
 	}
-	Close-VCSAConnection -vcsaName $podConfig.target.server
+	Close-VcConnection -vcsaName $podConfig.target.server
 }
 
 
 if($configureVCSA) {
 	Write-Log "#### Configuring VCSA ####"
-	$nVCSA = Get-VCSAConnection -vcsaName $podConfig.vcsa.ip -vcsaUser "administrator@$($podConfig.vcsa.sso.domain)" -vcsaPassword $podConfig.vcsa.sso.password
+	$nVCSA = Get-VcConnection -vcsaName $podConfig.vcsa.ip -vcsaUser "administrator@$($podConfig.vcsa.sso.domain)" -vcsaPassword $podConfig.vcsa.sso.password
 
 	Write-Log "## Configuring Datacenter and Cluster ##"
 	Write-Log "Creating Datacenter $($podConfig.vcsa.datacenter)"
@@ -379,7 +424,6 @@ if($configureVCSA) {
 		Write-Log "## Adding hosts to cluster ##"
 		$nCluster = Get-Cluster -Name $podConfig.vcsa.cluster -Server $nVCSA
 		$podConfig.esxi.hosts | ForEach-Object {
-			$nestedESXiName = $_.name
 			$nestedESXiIPAddress = $_.ip
 			Write-Log "Adding ESXi host $nestedESXiIPAddress to Cluster" -Info
 			if((Get-VMHost -Server $nVCSA | Where-Object -Property Name -eq -Value $nestedESXiIPAddress) -eq $null) {
@@ -445,7 +489,7 @@ if($configureVCSA) {
 		}
 		Write-Log "Adding hosts to distributed switch" -Info
 		foreach ($nHost in $nHosts) {
-			if(($distributedSwitch | Get-VMHost | where {$_.Name -eq $nHost.Name}) -eq $null) {
+			if(($distributedSwitch | Get-VMHost | Where-Object {$_.Name -eq $nHost.Name}) -eq $null) {
 				Add-VDSwitchVMHost -VDSwitch $distributedSwitch -VMHost $nHost
 				$pause = 20
 			} else {
@@ -466,7 +510,7 @@ if($configureVCSA) {
 		Start-Sleep -Seconds $pause # Pause reduces failures
 
 		foreach($nHost in $nHosts) {
-			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | where { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic1"}) -eq $NULL) {
+			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | Where-Object { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic1"}) -eq $NULL) {
 				Write-Log "Adding $($nHost.Name) vmnic1 to distributed switch"
 				Add-VDSwitchPhysicalNetworkAdapter -VMHostNetworkAdapter (Get-VMHostNetworkAdapter -Name "vmnic1" -VMHost $nHost) -DistributedSwitch $distributedSwitch -Confirm:$false
 				$pause = 20
@@ -491,7 +535,7 @@ if($configureVCSA) {
 		Start-Sleep -Seconds $pause # Pause reduces failures
 
 		foreach($nHost in $nHosts) {
-			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | where { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic0"}) -eq $NULL) {
+			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | Where-Object { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic0"}) -eq $NULL) {
 				Write-Log "Moving $($nHost.Name) vmnic0 to distributed switch"
 				Add-VDSwitchPhysicalNetworkAdapter -VMHostNetworkAdapter (Get-VMHostNetworkAdapter -Name "vmnic0" -VMHost $nHost) -DistributedSwitch $distributedSwitch -Confirm:$false
 				$pause = 20
@@ -504,17 +548,17 @@ if($configureVCSA) {
 		Write-Log "Removing standard vSwitches"
 		Get-VirtualSwitch -Server $nVCSA -Standard | Remove-VirtualSwitch -Confirm:$false
 	}
-	Close-VCSAConnection -vcsaName $podConfig.vcsa.ip
+	Close-VcConnection -vcsaName $podConfig.vcsa.ip
 }
 
 if($DeployNSXManager) {
 	Write-Log "#### Deploying NSX Manager ####"
-	$pVCSA = Get-VCSAConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
+	$pVCSA = Get-VcConnection -vcsaName $podConfig.target.server -vcsaUser $podConfig.target.user -vcsaPassword $podConfig.target.password
 	$pCluster = Get-Cluster -Name $podConfig.target.cluster -Server $pVCSA
 	$pDatastore = Get-Datastore -Name $podConfig.target.datastore -Server $pVCSA
 	$pPortGroup = Get-VDPortgroup -Name $podConfig.target.portgroup -Server $pVCSA
 	$pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.target.folder
-	$pESXi = $pCluster | Get-VMHost -Server $pVCSA | where { $_.ConnectionState -eq "Connected" } | Get-Random
+	$pESXi = $pCluster | Get-VMHost -Server $pVCSA | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
 
 	if((Get-VM -Server $pVCSA | Where-Object -Property Name -eq -Value $podConfig.nsx.name) -eq $null) {
 		$ovfconfig = @{
@@ -531,7 +575,7 @@ if($DeployNSXManager) {
 			"vsm_domain_0" = "$($podConfig.target.network.domain)"
 		}
 		Write-Log "Deploying NSX Manager OVA"
-		$importedVApp = Import-VApp -Server $pVCSA -VMhost $pESXi -Source $podConfig.sources.NSXAppliance -OVFConfiguration $ovfconfig -Name $podConfig.nsx.name -Datastore $pDatastore -DiskStorageFormat thin
+		Import-VApp -Server $pVCSA -VMhost $pESXi -Source $podConfig.sources.NSXAppliance -OVFConfiguration $ovfconfig -Name $podConfig.nsx.name -Datastore $pDatastore -DiskStorageFormat thin | Out-File -Append -LiteralPath $verboseLogFile
 		$NSX = Get-VM -Name $podConfig.nsx.name -Server $pVCSA
 		Write-Log "Moving $($podConfig.nsx.name) to $($podConfig.target.folder) folder"
 		Move-VM -VM $NSX -Destination $pFolder |  Out-File -Append -LiteralPath $verboseLogFile
@@ -554,13 +598,13 @@ if($DeployNSXManager) {
 	} else {
 		Write-Log "NSX manager exists, skipping" -Warning
 	}
-	Close-VCSAConnection -vcsaName $podConfig.target.server
+	Close-VcConnection -vcsaName $podConfig.target.server
 }
 
 if($configureNSX) {
 	Write-Log "#### Configuring NSX Manager ####"
 	Write-Log "Getting connection to the new VCSA"
-	$nVCSA = Get-VCSAConnection -vcsaName $podConfig.vcsa.ip -vcsaUser "administrator@$($podConfig.vcsa.sso.domain)" -vcsaPassword $podConfig.vcsa.sso.password
+	$nVCSA = Get-VcConnection -vcsaName $podConfig.vcsa.ip -vcsaUser "administrator@$($podConfig.vcsa.sso.domain)" -vcsaPassword $podConfig.vcsa.sso.password
 	$nCluster = Get-Cluster -Server $nVCSA -Name $podConfig.vcsa.cluster
 	Write-Log "Licensing NSX"
 	$ServiceInstance = Get-View ServiceInstance
@@ -607,7 +651,7 @@ if($configureNSX) {
 		Write-Log "NSX Controller Exists, skipping" -Warning
 	}
 	Write-Log "## Preparing hosts ##"
-	$clusterStatus = ($nCluster | Get-NsxClusterStatus | select -first 1).installed
+	$clusterStatus = ($nCluster | Get-NsxClusterStatus | Select-Object -first 1).installed
 	if($clusterStatus -eq "false") {
 		Write-Log "Initiating installation of NSX agents"
 		$nCluster | Install-NsxCluster | Out-File -Append -LiteralPath $verboseLogFile
@@ -625,7 +669,7 @@ if($configureNSX) {
 		Write-Log "Creating VDS Context"
 		New-NsxVdsContext -VirtualDistributedSwitch $nVDSwitch -Teaming LOADBALANCE_SRCID -Mtu 1600 | Out-File -Append -LiteralPath $verboseLogFile
 	}
-	$vxlanStatus =  (Get-NsxClusterStatus $nCluster | where {$_.featureId -eq "com.vmware.vshield.vsm.vxlan" }).status | Out-File -Append -LiteralPath $verboseLogFile
+	$vxlanStatus =  (Get-NsxClusterStatus $nCluster | Where-Object {$_.featureId -eq "com.vmware.vshield.vsm.vxlan" }).status | Out-File -Append -LiteralPath $verboseLogFile
 	if($vxlanStatus -ne "GREEN") {
 		$nCluster | New-NsxClusterVxlanConfig -VirtualDistributedSwitch $nVDSwitch -ipPool (Get-NsxIpPool -Name "VTEPs") -VlanId 0 -VtepCount 2
 	} else {
@@ -641,7 +685,7 @@ if($configureNSX) {
 	} else {
 		Write-Log "Transport Zone exists, skipping" -warning
 	}
-	Close-VCSAConnection -vcsaName $podConfig.vcsa.ip
+	Close-VcConnection -vcsaName $podConfig.vcsa.ip
 }
 
 # if($deployvRAAppliance) {
@@ -665,7 +709,7 @@ if($configureNSX) {
 # 	Start-VM -Server $vCenter -VM $vm -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 # }
 
-Close-VCSAConnection
+Close-VcConnection
 
 $EndTime = Get-Date
 $duration = [math]::Round((New-TimeSpan -Start $StartTime -End $EndTime).TotalMinutes,2)
