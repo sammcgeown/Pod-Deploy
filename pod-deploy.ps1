@@ -152,13 +152,19 @@ $pDatastore = Get-Datastore -Name $podConfig.physical.datastore -Server $pVCSA -
 if($pDatastore) { Write-Log "Physical Datastore: OK" -Info } else { Write-Log "Physical Datastore: Failed" -Warning; $preflightFailure = $true }
 $pPortGroup = Get-VDPortgroup -Name $podConfig.physical.portgroup -Server $pVCSA -ErrorAction SilentlyContinue
 if($pPortGroup) { Write-Log "Physical Portgroup: OK" -Info } else { Write-Log "Physical Portgroup: Failed" -Warning; $preflightFailure = $true }
+if($pPortGroup.ExtensionData.Config.DefaultPortConfig.SecurityPolicy.AllowPromiscuous.Value -eq "Accept") {   Write-Log "Physical Portgroup (Promiscuous mode): OK" -Info } else { Write-Log "Physical Portgroup: Promiscuous mode denied" -Warning; $preflightFailure = $true }
+if($pPortGroup.ExtensionData.Config.DefaultPortConfig.SecurityPolicy.ForgedTransmits.Value -eq "Accept") {   Write-Log "Physical Portgroup (Forged transmits): OK" -Info } else { Write-Log "Physical Portgroup: Forged transmits denied" -Warning; $preflightFailure = $true }
 $pFolder = Get-PodFolder -vcsaConnection $pVCSA -folderPath $podConfig.physical.folder -ErrorAction SilentlyContinue
 if($pFolder) { Write-Log "Physical Folder: OK" -Info } else { Write-Log "Physical Folder: Failed" -Warning; $preflightFailure = $true }
 $pHost = $pCluster | Get-VMHost -Server $pVCSA  -ErrorAction SilentlyContinue | Where-Object { $_.ConnectionState -eq "Connected" } | Get-Random
 if($pHost) { Write-Log "Physical Host: OK" -Info } else { Write-Log "Physical Host: Failed" -Warning; $preflightFailure = $true }
 
 
-
+if($preflightFailure) {
+	Write-Log "#### Aborting - please fix pre-flight configuration errors ####" -Warning
+	Close-VcConnection
+	return;
+}
 
 if($deployESXi) {
 	Write-Log "#### Deploying Nested ESXi VMs ####"
@@ -403,6 +409,8 @@ if($configureVCSA) {
 	} else {
 		Write-Log "Cluster exists, skipping" -Warning
 	}
+	Write-Log "Enabling VMotion on vmkernel ports" -Info
+	Get-VMHostNetworkAdapter -Server $nVCSA -VMkernel | Set-VMHostNetworkAdapter -VMotionEnabled:$true -Confirm:$false |  Out-File -Append -LiteralPath $verboseLogFile
 
 	if($licenseVCSA) {
 		Write-Log "Licensing vSphere"
@@ -495,10 +503,10 @@ if($configureVCSA) {
 		$nHosts = Get-VMHost -Location $podConfig.vcsa.cluster -Server $nVCSA
 		$nDatacenter = Get-Datacenter -Name $podConfig.vcsa.datacenter -Server $nVCSA
 		$distributedSwitch = Get-VDSwitch -Server $nVCSA | Where-Object -Property Name -eq -Value $podConfig.vcsa.distributedSwitch
+		Write-Log "Creating distributed switch" -Info
 		if($distributedSwitch -eq $null) {
-			Write-Log "Creating distributed switch" -Info
 			$distributedSwitch = New-VDSwitch -Name $podConfig.vcsa.distributedSwitch -Location $nDatacenter -Server $nVCSA -NumUplinkPorts 2
-			Start-Sleep -Seconds 10 # Pause reduces failures
+			Start-Sleep -Seconds 3
 		} else {
 			Write-Log "Distributed switch exists, skipping" -Warning
 		}
@@ -506,53 +514,33 @@ if($configureVCSA) {
 		foreach ($nHost in $nHosts) {
 			if(($distributedSwitch | Get-VMHost | Where-Object {$_.Name -eq $nHost.Name}) -eq $null) {
 				Add-VDSwitchVMHost -VDSwitch $distributedSwitch -VMHost $nHost
-				Start-Sleep -Seconds 10 # Pause reduces failures
+				#Start-Sleep -Seconds 10
 			} else {
 				Write-Log "$($nHost) is already added to VDS" -Warning
 			}
 		}
 		$dvPortGroup = Get-VDPortgroup | Where-Object -Property Name -eq -Value $podConfig.vcsa.portgroup
+		Write-Log "Creating distributed port group" -Info
 		if($dvPortGroup -eq $null) {
-			Write-Log "Creating distributed port group" -Info
 			$dvPortGroup = New-VDPortgroup -Name $podConfig.vcsa.portgroup -NumPorts 1000 -VDSwitch $distributedSwitch
-			Start-Sleep -Seconds 10 # Pause reduces failures
+			Start-Sleep -Seconds 3
 		} else {
 			Write-Log "Distributed port group exists, skipping" -Warning
 		}
 
 		foreach($nHost in $nHosts) {
-			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | Where-Object { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic1"}) -eq $NULL) {
-				Write-Log "Adding $($nHost.Name) vmnic1 to distributed switch"
-				Add-VDSwitchPhysicalNetworkAdapter -VMHostNetworkAdapter (Get-VMHostNetworkAdapter -Name "vmnic1" -VMHost $nHost) -DistributedSwitch $distributedSwitch -Confirm:$false
+			$networkAdapters = Get-VMHostNetworkAdapter -VMHost $nHost -Physical
+			$vmkernelAdapter = Get-VMHostNetworkAdapter -VMHost $nHost -VMKernel
+			Write-Log "Migrating NICs and VMkernel adapter to distributed switch" -Info
+			if($vmkernelAdapter.PortGroupName -ne $podConfig.vcsa.portgroup) {
+				Add-VDSwitchPhysicalNetworkAdapter -DistributedSwitch $distributedSwitch -VMHostPhysicalNic $networkAdapters -VMHostVirtualNic $vmkernelAdapter -VirtualNicPortgroup $dvPortGroup -Confirm:$false
 			} else {
-				Write-Log "$($nHost.Name) vmnic1 is already assigned to $($podConfig.vcsa.distributedSwitch)" -Warning
+				Write-Log "NICs and VMKernel adapter are already assigned to the distributed switch, skipping" -Warning
 			}
-		}
-		Start-Sleep -Seconds 30 # Pause reduces failures
 
-		foreach($nHost in $nHosts) {			
-			Write-Log "Migrating $($nHost.Name) VMKernel to distributed switch"
-			$VMHNA = Get-VMHostNetworkAdapter -VMHost $nHost -Name vmk0
-			if($VMHNA.PortGroupName -eq $podConfig.vcsa.portgroup) {
-				Write-Log "vmk0 on $($nHost.Name) is already assigned to the port group $($dvPortGroup)" -Warning
-			} else {
-				Set-VMHostNetworkAdapter -PortGroup $dvPortGroup -VirtualNic (Get-VMHostNetworkAdapter  -Name vmk0 -VMHost $nHost) -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
-				Start-Sleep -Seconds 20 # Pause reduces failures
-			}
 		}
-
-		foreach($nHost in $nHosts) {
-			if((Get-VMHostNetworkAdapter -DistributedSwitch (Get-VDSwitch -Name $podConfig.vcsa.distributedSwitch ) | Where-Object { $_.VMHost.Name -eq $nHost.Name -and $_.DeviceName -eq "vmnic0"}) -eq $NULL) {
-				Write-Log "Moving $($nHost.Name) vmnic0 to distributed switch"
-				Add-VDSwitchPhysicalNetworkAdapter -VMHostNetworkAdapter (Get-VMHostNetworkAdapter -Name "vmnic0" -VMHost $nHost) -DistributedSwitch $distributedSwitch -Confirm:$false
-				Start-Sleep -Seconds 20 # Pause reduces failures
-			} else {
-				Write-Log "$($nHost.Name) vmnic0 is already assigned to $($podConfig.vcsa.distributedSwitch)" -Warning
-				$pause = 1
-			}
-		}
-		Start-Sleep -Seconds 20 # Pause reduces failures
-		Write-Log "Removing standard vSwitches"
+		Start-Sleep -Seconds 5
+		Write-Log "Removing standard vSwitches" -Info
 		Get-VirtualSwitch -Server $nVCSA -Standard | Remove-VirtualSwitch -Confirm:$false
 	}
 }
